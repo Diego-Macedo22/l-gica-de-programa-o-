@@ -53,6 +53,7 @@
 #define FATOR_CRESCIMENTO  2                /* vetor dobra quando enche   */
 #define TAM_NOME           100
 #define TAM_CAMPUS         20
+#define TAM_CPF            12               /* 11 digitos + '\0'          */
 #define TAM_LINHA          512              /* buffer p/ ler uma linha    */
 #define SEMESTRE_MIN       1
 #define SEMESTRE_MAX       20
@@ -66,14 +67,16 @@
  * Registro de um usuario da catraca.
  *
  * Observacao sobre o CPF: um CPF tem 11 digitos (ate 99.999.999.999),
- * mas um 'int' de 32 bits so guarda ate 2.147.483.647 (10 digitos).
- * Por isso o campo usa 'long long' (64 bits), que comporta o CPF
- * completo sem estourar e permite validar os digitos verificadores.
+ * mas um 'int' so guarda ate 2.147.483.647 (10 digitos), entao o
+ * numero estouraria. Por isso o CPF e guardado como TEXTO (vetor de
+ * char): 11 digitos + 1 posicao para o '\0' que termina a string.
+ * Como texto, os zeros a esquerda tambem sao preservados
+ * (ex.: "08301661305") e cada digito pode ser conferido na validacao.
  */
 typedef struct {
     char  nome[TAM_NOME];
     int   matricula;
-    long long CPF;
+    char  CPF[TAM_CPF];
     int   semestre;
     char  campus[TAM_CAMPUS];
     float valorMensalidade;
@@ -126,9 +129,10 @@ int  lerLinha(const char *mensagem, char *destino, size_t tamanho);
 int  lerTextoObrigatorio(const char *mensagem, char *destino, size_t tamanho);
 int  lerInteiro(const char *mensagem, long minimo, long maximo, int *saida);
 int  lerFloat(const char *mensagem, float minimo, float maximo, float *saida);
-int  lerCPF(const char *mensagem, long long *saida);
+int  lerCPF(const char *mensagem, char *saida);
 int  lerConfirmacao(const char *mensagem);
-int  validarCPF(long long cpf);
+int  validarCPF(const char *cpf);
+int  cpfTemFormatoValido(const char *cpf);
 int  contemSemDiferenciarCaixa(const char *texto, const char *trecho);
 
 /* Exibicao e estatisticas */
@@ -378,6 +382,7 @@ int buscarIndicePorMatricula(const ListaUsuarios *lista, int matricula) {
 void carregarArquivo(ListaUsuarios *lista, const char *nomeArquivo) {
     FILE *arquivo;
     char linha[TAM_LINHA];
+    char cpfLido[32];   /* area folgada para ler o campo CPF do arquivo */
     int numeroLinha = 0;
     int carregados = 0;
     Usuario u;
@@ -396,8 +401,8 @@ void carregarArquivo(ListaUsuarios *lista, const char *nomeArquivo) {
             continue; /* ignora linhas em branco */
         }
 
-        if (sscanf(linha, "%d ;%99[^;];%lld ;%d ;%19[^;];%f",
-                   &u.matricula, u.nome, &u.CPF, &u.semestre,
+        if (sscanf(linha, "%d ;%99[^;];%31[^;];%d ;%19[^;];%f",
+                   &u.matricula, u.nome, cpfLido, &u.semestre,
                    u.campus, &u.valorMensalidade) != 6) {
             printf("AVISO: linha %d do arquivo ignorada (formato invalido).\n",
                    numeroLinha);
@@ -405,6 +410,15 @@ void carregarArquivo(ListaUsuarios *lista, const char *nomeArquivo) {
         }
         removerEspacos(u.nome);
         removerEspacos(u.campus);
+        removerEspacos(cpfLido);
+
+        /* O CPF lido precisa ter exatamente 11 digitos para caber no campo. */
+        if (!cpfTemFormatoValido(cpfLido)) {
+            printf("AVISO: linha %d ignorada (CPF deve ter 11 digitos).\n",
+                   numeroLinha);
+            continue;
+        }
+        strcpy(u.CPF, cpfLido); /* copia o texto para o campo da struct */
 
         if (buscarIndicePorMatricula(lista, u.matricula) != -1) {
             printf("AVISO: linha %d ignorada (matricula %d repetida).\n",
@@ -429,7 +443,7 @@ void carregarArquivo(ListaUsuarios *lista, const char *nomeArquivo) {
  * Abre (ou CRIA, se nao existir) o arquivo de dados em modo escrita
  * ("w"). O modo "w" apaga o conteudo anterior, por isso todos os
  * registros da memoria sao regravados, um por linha, com fprintf.
- * O CPF e gravado com "%011lld" para manter os zeros a esquerda.
+ * O CPF e gravado como texto (%s), mantendo os zeros a esquerda.
  * Retorna 1 em caso de sucesso e 0 se nao conseguiu abrir o arquivo.
  */
 int salvarArquivo(const ListaUsuarios *lista, const char *nomeArquivo) {
@@ -444,7 +458,7 @@ int salvarArquivo(const ListaUsuarios *lista, const char *nomeArquivo) {
 
     for (i = 0; i < lista->quantidade; i++) {
         const Usuario *u = &lista->dados[i];
-        fprintf(arquivo, "%d;%s;%011lld;%d;%s;%.2f\n",
+        fprintf(arquivo, "%d;%s;%s;%d;%s;%.2f\n",
                 u->matricula, u->nome, u->CPF, u->semestre,
                 u->campus, u->valorMensalidade);
     }
@@ -674,11 +688,10 @@ int lerFloat(const char *mensagem, float minimo, float maximo, float *saida) {
  * Le um CPF aceitando os formatos "52998224725" ou "529.982.247-25".
  * Exige exatamente 11 digitos e digitos verificadores corretos.
  */
-int lerCPF(const char *mensagem, long long *saida) {
+int lerCPF(const char *mensagem, char *saida) {
     char buffer[64];
-    char digitos[12];
+    char digitos[TAM_CPF];   /* guarda so os digitos: 11 + '\0' */
     int qtd, i, valido;
-    long long cpf;
 
     while (1) {
         if (!lerLinha(mensagem, buffer, sizeof(buffer))) {
@@ -699,10 +712,9 @@ int lerCPF(const char *mensagem, long long *saida) {
         }
 
         if (valido && qtd == 11) {
-            digitos[11] = '\0';
-            cpf = strtoll(digitos, NULL, 10);
-            if (validarCPF(cpf)) {
-                *saida = cpf;
+            digitos[11] = '\0';   /* fecha a string */
+            if (validarCPF(digitos)) {
+                strcpy(saida, digitos); /* copia o CPF so com digitos */
                 return 1;
             }
             printf("CPF invalido (digitos verificadores nao conferem).\n");
@@ -713,23 +725,41 @@ int lerCPF(const char *mensagem, long long *saida) {
 }
 
 /*
+ * cpfTemFormatoValido
+ * Verifica apenas o formato: o texto deve ter exatamente 11 caracteres
+ * e todos devem ser digitos (0 a 9). Retorna 1 se sim e 0 se nao.
+ */
+int cpfTemFormatoValido(const char *cpf) {
+    int i;
+
+    if (strlen(cpf) != 11) {
+        return 0;
+    }
+    for (i = 0; i < 11; i++) {
+        if (!isdigit((unsigned char) cpf[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/*
  * validarCPF
  * Confere os dois digitos verificadores do CPF pelo algoritmo oficial
  * (modulo 11). Rejeita tambem sequencias repetidas (ex.: 111.111.111-11).
  * Retorna 1 se valido e 0 se invalido.
  */
-int validarCPF(long long cpf) {
+int validarCPF(const char *cpf) {
     int d[11];
     int i, soma, resto, todosIguais = 1;
 
-    if (cpf <= 0 || cpf > 99999999999LL) {
+    if (!cpfTemFormatoValido(cpf)) {
         return 0;
     }
 
-    /* separa os 11 digitos, do ultimo para o primeiro */
-    for (i = 10; i >= 0; i--) {
-        d[i] = (int) (cpf % 10);
-        cpf /= 10;
+    /* converte cada caractere em numero: '7' - '0' = 7 */
+    for (i = 0; i < 11; i++) {
+        d[i] = cpf[i] - '0';
     }
 
     for (i = 1; i < 11; i++) {
@@ -813,7 +843,7 @@ void imprimirUsuario(const Usuario *u) {
     printf("------------------------------\n");
     printf("Matricula ....: %d\n", u->matricula);
     printf("Nome .........: %s\n", u->nome);
-    printf("CPF ..........: %011lld\n", u->CPF);
+    printf("CPF ..........: %s\n", u->CPF);
     printf("Semestre .....: %d\n", u->semestre);
     printf("Campus .......: %s\n", u->campus);
     printf("Mensalidade ..: R$ %.2f\n", u->valorMensalidade);
@@ -829,7 +859,7 @@ void imprimirCabecalhoTabela(void) {
 
 /* "%-30.30s" alinha a esquerda e corta nomes longos em 30 caracteres. */
 void imprimirLinhaTabela(const Usuario *u) {
-    printf("%-10d | %-30.30s | %011lld | %3d | %-15.15s | %10.2f\n",
+    printf("%-10d | %-30.30s | %-11s | %3d | %-15.15s | %10.2f\n",
            u->matricula, u->nome, u->CPF, u->semestre,
            u->campus, u->valorMensalidade);
 }
@@ -889,7 +919,7 @@ void cadastrarUsuario(ListaUsuarios *lista) {
     }
 
     if (!lerTextoObrigatorio("Nome: ", novo.nome, sizeof(novo.nome))) return;
-    if (!lerCPF("CPF (somente numeros ou 000.000.000-00): ", &novo.CPF)) return;
+    if (!lerCPF("CPF (somente numeros ou 000.000.000-00): ", novo.CPF)) return;
     if (!lerInteiro("Semestre (1 a 20): ", SEMESTRE_MIN, SEMESTRE_MAX,
                     &novo.semestre)) return;
     if (!lerTextoObrigatorio("Campus: ", novo.campus, sizeof(novo.campus))) return;
@@ -967,7 +997,7 @@ void validarCadastro(const ListaUsuarios *lista) {
         problemas++;
     }
     if (!validarCPF(u->CPF)) {
-        printf("- Problema: CPF %011lld invalido.\n", u->CPF);
+        printf("- Problema: CPF %s invalido.\n", u->CPF);
         problemas++;
     }
     if (u->semestre < SEMESTRE_MIN || u->semestre > SEMESTRE_MAX) {
@@ -1036,7 +1066,7 @@ void alterarRegistro(ListaUsuarios *lista) {
                                         sizeof(copia.nome))) alterou = 1;
                 break;
             case 2:
-                if (lerCPF("Novo CPF: ", &copia.CPF)) alterou = 1;
+                if (lerCPF("Novo CPF: ", copia.CPF)) alterou = 1;
                 break;
             case 3:
                 if (lerInteiro("Novo semestre (1 a 20): ", SEMESTRE_MIN,
