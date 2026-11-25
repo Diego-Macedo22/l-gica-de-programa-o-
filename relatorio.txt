@@ -1,14 +1,6 @@
-==================================================
-   RELATORIO GERAL - SISTEMA DE CATRACAS
-==================================================
-Gerado em ............: 25/11/2026 14:11:18
-Arquivo de dados .....: usuarios.txt
-Total de registros ...: 6
---------------------------------------------------
-Campo analisado: valorMensalidade
---------------------------------------------------
-Soma das mensalidades : R$ 5091.50
+===== RELATORIO GERAL DA CATRACA =====
+Total de registros: 6
+Soma das mensalidades: R$ 5091.50
 Media das mensalidades: R$ 848.58
-Maior mensalidade ....: R$ 1100.00 (Eduarda Rocha, matricula 2024005)
-Menor mensalidade ....: R$ 650.75 (Diego Alves, matricula 2024004)
-==================================================
+Maior mensalidade: R$ 1100.00 (Eduarda Rocha)
+Menor mensalidade: R$ 650.75 (Diego Alves)
